@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Pesawat Kertas — Game Mading</title>
+<style>
+  :root{
+    --paper:#F8F1E0;
+    --rule:#BFD7EA;
+    --margin:#D94F4F;
+    --ink:#2B2A28;
+    --pencil:#F2C14E;
+    --pencil-tip:#E4572E;
+    --pencil-graphite:#5B4636;
+  }
+
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+
+  html,body{
+    margin:0; padding:0; height:100%; overflow:hidden;
+    background:#3a3530;
+    touch-action:manipulation;
+    font-family:'Courier New', Courier, monospace;
+    color:var(--ink);
+  }
+
+  #stage{
+    position:fixed; inset:0;
+    display:flex; align-items:center; justify-content:center;
+  }
+
+  #page{
+    position:relative;
+    width:400px; height:700px;
+    max-width:100vw; max-height:100vh;
+    aspect-ratio:400/700;
+    background:var(--paper);
+    box-shadow:0 10px 40px rgba(0,0,0,.5);
+    overflow:hidden;
+    border-radius:4px;
+  }
+
+  /* notebook holes, top strip */
+  .holes{
+    position:absolute; left:14px; top:0; bottom:0; width:10px;
+    display:flex; flex-direction:column; justify-content:space-evenly;
+    z-index:5; pointer-events:none;
+  }
+  .holes span{
+    width:10px; height:10px; border-radius:50%;
+    background:#3a3530;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,.5);
+  }
+
+  header{
+    position:absolute; top:0; left:0; right:0;
+    padding:14px 16px 10px 40px;
+    z-index:6;
+    display:flex; align-items:baseline; justify-content:space-between;
+    border-bottom:2px dashed var(--rule);
+    background:linear-gradient(var(--paper), var(--paper) 85%, transparent);
+  }
+  header .eyebrow{
+    font-size:10px; letter-spacing:.12em; color:var(--margin);
+    font-weight:bold; text-transform:uppercase;
+  }
+  header h1{
+    margin:2px 0 0; font-size:20px;
+    font-family:'Segoe Print','Bradley Hand','Comic Sans MS', cursive;
+    color:var(--ink); font-weight:normal;
+  }
+  header .score{
+    font-size:22px; font-weight:bold; color:var(--ink);
+    background:#fff; border:2px solid var(--ink);
+    border-radius:6px; padding:2px 10px; min-width:46px; text-align:center;
+    transform:rotate(2deg);
+  }
+
+  canvas{
+    position:absolute; left:0; top:0; width:100%; height:100%;
+    display:block;
+  }
+
+  .overlay{
+    position:absolute; inset:0; z-index:10;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; padding:30px;
+    background:rgba(248,241,224,.92);
+  }
+  .hidden{ display:none; }
+
+  .overlay h2{
+    font-family:'Segoe Print','Bradley Hand','Comic Sans MS', cursive;
+    font-size:38px; margin:0 0 6px; color:var(--ink); line-height:1.1;
+  }
+  .overlay p{
+    margin:4px 0 20px; font-size:14px; color:#5a564e; max-width:260px;
+  }
+  .stamp{
+    font-family:'Segoe Print','Bradley Hand','Comic Sans MS', cursive;
+    font-size:16px;
+    border:3px solid var(--margin); color:var(--margin);
+    padding:10px 22px; border-radius:8px;
+    transform:rotate(-3deg);
+    background:none; cursor:pointer;
+    letter-spacing:.04em;
+  }
+  .stamp:active{ transform:rotate(-3deg) scale(.95); }
+
+  .gameover-score{
+    font-size:46px; font-weight:bold; margin:6px 0 2px;
+  }
+  .gameover-best{
+    font-size:12px; color:#8a857a; margin-bottom:18px;
+  }
+
+  footer.hint{
+    position:absolute; bottom:14px; left:0; right:0; z-index:6;
+    text-align:center; font-size:11px; color:#8a857a;
+    pointer-events:none;
+  }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <div id="page">
+    <div class="holes">
+      <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+    </div>
+
+    <header>
+      <div>
+        <div class="eyebrow">Game Mading</div>
+        <h1>Pesawat Kertas</h1>
+      </div>
+      <div class="score" id="liveScore">0</div>
+    </header>
+
+    <canvas id="game"></canvas>
+
+    <div class="overlay" id="startScreen">
+      <h2>Pesawat Kertas</h2>
+      <p>Ketuk layar buat terbangin pesawat. Hindari pensilnya, lewatin celahnya, kumpulin skor sebanyak-banyaknya!</p>
+      <button class="stamp" id="startBtn">▶ KETUK UNTUK MULAI</button>
+    </div>
+
+    <div class="overlay hidden" id="overScreen">
+      <h2>Nabrak! ✎</h2>
+      <div class="gameover-score" id="finalScore">0</div>
+      <div class="gameover-best" id="bestScoreLine">Skor tertinggi sesi ini: 0</div>
+      <button class="stamp" id="retryBtn">↻ COBA LAGI</button>
+    </div>
+
+    <footer class="hint" id="hint">dibuat untuk mading kelas</footer>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------- setup ----------
+  const page = document.getElementById('page');
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+
+  const W = 400, H = 700; // internal resolution
+  let dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+  function resize(){
+    const rect = page.getBoundingClientRect();
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width = rect.width + 'px';
+    canvas.style.height = rect.height + 'px';
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ---------- state ----------
+  const STATE = { READY:0, PLAY:1, OVER:2 };
+  let state = STATE.READY;
+
+  let liveScoreEl = document.getElementById('liveScore');
+  let startScreen = document.getElementById('startScreen');
+  let overScreen = document.getElementById('overScreen');
+  let finalScoreEl = document.getElementById('finalScore');
+  let bestLineEl = document.getElementById('bestScoreLine');
+  let hint = document.getElementById('hint');
+
+  let score = 0;
+  let best = 0; // session-only, resets on reload (no storage used)
+
+  const GROUND_Y = H - 60;
+  const CEIL_Y = 90;
+
+  const plane = {
+    x: 110, y: H/2, w: 34, h: 22,
+    vy: 0, rot: 0
+  };
+  const GRAVITY = 1500;     // px/s^2
+  const FLAP_V = -430;      // px/s
+  const MAX_FALL = 600;
+
+  let pencils = []; // {x, gapY, gapH, passed, w}
+  const PENCIL_W = 46;
+  let spawnTimer = 0;
+  let SPAWN_EVERY = 1.5; // seconds
+  let scrollSpeed = 190; // px/s, ramps up slowly
+
+  let lastT = 0;
+  let raf = null;
+
+  // ---------- input ----------
+  function flap(){
+    if(state === STATE.READY){
+      startGame();
+      return;
+    }
+    if(state === STATE.PLAY){
+      plane.vy = FLAP_V;
+    }
+    if(state === STATE.OVER){
+      return; // handled by retry button
+    }
+  }
+
+  page.addEventListener('pointerdown', (e)=>{
+    flap();
+  });
+  window.addEventListener('keydown', (e)=>{
+    if(e.code === 'Space' || e.code === 'ArrowUp'){
+      e.preventDefault();
+      flap();
+    }
+  });
+
+  document.getElementById('startBtn').addEventListener('click', (e)=>{
+    e.stopPropagation();
+    startGame();
+  });
+  document.getElementById('retryBtn').addEventListener('click', (e)=>{
+    e.stopPropagation();
+    startGame();
+  });
+
+  // ---------- game flow ----------
+  function startGame(){
+    score = 0;
+    liveScoreEl.textContent = '0';
+    plane.y = H/2; plane.vy = 0; plane.rot = 0;
+    pencils = [];
+    spawnTimer = 0;
+    scrollSpeed = 190;
+    state = STATE.PLAY;
+    startScreen.classList.add('hidden');
+    overScreen.classList.add('hidden');
+    hint.classList.add('hidden');
+    lastT = performance.now();
+    if(raf) cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(loop);
+  }
+
+  function endGame(){
+    state = STATE.OVER;
+    if(score > best) best = score;
+    finalScoreEl.textContent = String(score);
+    bestLineEl.textContent = 'Skor tertinggi sesi ini: ' + best;
+    overScreen.classList.remove('hidden');
+  }
+
+  // ---------- spawn ----------
+  function spawnPencil(){
+    const minGap = 165;
+    const gapH = minGap;
+    const margin = 40;
+    const gapY = CEIL_Y + margin + Math.random() * (GROUND_Y - CEIL_Y - gapH - margin*2);
+    pencils.push({ x: W + 20, gapY, gapH, passed:false, w: PENCIL_W });
+  }
+
+  // ---------- update ----------
+  function update(dt){
+    // plane physics
+    plane.vy += GRAVITY * dt;
+    if(plane.vy > MAX_FALL) plane.vy = MAX_FALL;
+    plane.y += plane.vy * dt;
+    plane.rot = Math.max(-0.5, Math.min(1.1, plane.vy / 500));
+
+    // ramp difficulty slowly
+    scrollSpeed = Math.min(290, scrollSpeed + dt * 4);
+
+    // spawn
+    spawnTimer += dt;
+    if(spawnTimer >= SPAWN_EVERY){
+      spawnTimer = 0;
+      spawnPencil();
+    }
+
+    // move pencils
+    for(const p of pencils){
+      p.x -= scrollSpeed * dt;
+      if(!p.passed && p.x + p.w < plane.x){
+        p.passed = true;
+        score += 1;
+        liveScoreEl.textContent = String(score);
+      }
+    }
+    pencils = pencils.filter(p => p.x > -60);
+
+    // collisions: ceiling / ground
+    if(plane.y - plane.h/2 < CEIL_Y || plane.y + plane.h/2 > GROUND_Y){
+      endGame();
+      return;
+    }
+
+    // collisions: pencils (circle-ish vs rect, using plane bbox)
+    const pl = plane.x - plane.w/2, pr = plane.x + plane.w/2;
+    const pt = plane.y - plane.h/2 + 4, pb = plane.y + plane.h/2 - 4;
+    for(const p of pencils){
+      const within = pr > p.x && pl < p.x + p.w;
+      if(!within) continue;
+      const gapTop = p.gapY, gapBot = p.gapY + p.gapH;
+      if(pt < gapTop || pb > gapBot){
+        endGame();
+        return;
+      }
+    }
+  }
+
+  // ---------- draw ----------
+  function drawBackground(){
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle = '#F8F1E0';
+    ctx.fillRect(0,0,W,H);
+
+    // ruled lines
+    ctx.strokeStyle = '#BFD7EA';
+    ctx.lineWidth = 1.5;
+    for(let y = CEIL_Y; y < GROUND_Y; y += 34){
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(W, y);
+      ctx.stroke();
+    }
+
+    // red margin line
+    ctx.strokeStyle = '#D94F4F';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(46, 0); ctx.lineTo(46, H);
+    ctx.stroke();
+
+    // ground strip (desk edge)
+    ctx.fillStyle = '#EADFC4';
+    ctx.fillRect(0, GROUND_Y, W, H-GROUND_Y);
+    ctx.strokeStyle = '#C9B98C';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, GROUND_Y); ctx.lineTo(W, GROUND_Y);
+    ctx.stroke();
+
+    // ceiling strip
+    ctx.fillStyle = '#EADFC4';
+    ctx.fillRect(0, 0, W, CEIL_Y);
+    ctx.strokeStyle = '#C9B98C';
+    ctx.beginPath();
+    ctx.moveTo(0, CEIL_Y); ctx.lineTo(W, CEIL_Y);
+    ctx.stroke();
+  }
+
+  function drawPencil(p){
+    const top = { x:p.x, y:0, h:p.gapY };
+    const bot = { x:p.x, y:p.gapY+p.gapH, h:GROUND_Y - (p.gapY+p.gapH) };
+
+    // top pencil (hangs down, tip pointing down into gap)
+    drawPencilShape(top.x, 0, p.w, top.h, true);
+    // bottom pencil (stands up, tip pointing up into gap)
+    drawPencilShape(bot.x, bot.y, p.w, bot.h, false);
+  }
+
+  function drawPencilShape(x, y, w, len, tipAtBottom){
+    if(len <= 0) return;
+    const tipLen = Math.min(34, len * 0.35);
+    const bodyLen = len - tipLen;
+
+    ctx.save();
+    if(tipAtBottom){
+      // body from y to y+bodyLen, tip from there to y+len
+      ctx.fillStyle = '#F2C14E';
+      ctx.fillRect(x, y, w, bodyLen);
+      // facet line
+      ctx.strokeStyle = 'rgba(0,0,0,.12)';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x+w*0.33, y); ctx.lineTo(x+w*0.33, y+bodyLen); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x+w*0.66, y); ctx.lineTo(x+w*0.66, y+bodyLen); ctx.stroke();
+      // graphite tip pointing down
+      ctx.fillStyle = '#5B4636';
+      ctx.beginPath();
+      ctx.moveTo(x, y+bodyLen);
+      ctx.lineTo(x+w, y+bodyLen);
+      ctx.lineTo(x+w/2, y+bodyLen+tipLen);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#2B2A28';
+      ctx.beginPath();
+      ctx.moveTo(x+w*0.42, y+bodyLen+tipLen*0.6);
+      ctx.lineTo(x+w*0.58, y+bodyLen+tipLen*0.6);
+      ctx.lineTo(x+w/2, y+bodyLen+tipLen);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      // tip first (pointing up), then body
+      ctx.fillStyle = '#5B4636';
+      ctx.beginPath();
+      ctx.moveTo(x, y+tipLen);
+      ctx.lineTo(x+w, y+tipLen);
+      ctx.lineTo(x+w/2, y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#2B2A28';
+      ctx.beginPath();
+      ctx.moveTo(x+w*0.42, y+tipLen*0.4);
+      ctx.lineTo(x+w*0.58, y+tipLen*0.4);
+      ctx.lineTo(x+w/2, y);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = '#F2C14E';
+      ctx.fillRect(x, y+tipLen, w, bodyLen);
+      ctx.strokeStyle = 'rgba(0,0,0,.12)';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x+w*0.33, y+tipLen); ctx.lineTo(x+w*0.33, y+tipLen+bodyLen); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x+w*0.66, y+tipLen); ctx.lineTo(x+w*0.66, y+tipLen+bodyLen); ctx.stroke();
+
+      // eraser cap at far end
+      ctx.fillStyle = '#E4572E';
+      ctx.fillRect(x, y+tipLen+bodyLen, w, Math.min(14, bodyLen));
+    }
+    ctx.restore();
+  }
+
+  function drawPlane(){
+    ctx.save();
+    ctx.translate(plane.x, plane.y);
+    ctx.rotate(plane.rot);
+
+    // paper airplane: simple folded triangle
+    ctx.fillStyle = '#FFFFFF';
+    ctx.strokeStyle = '#2B2A28';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(20, 0);
+    ctx.lineTo(-18, -11);
+    ctx.lineTo(-8, 0);
+    ctx.lineTo(-18, 11);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // fold line
+    ctx.beginPath();
+    ctx.moveTo(20, 0);
+    ctx.lineTo(-8, 0);
+    ctx.stroke();
+
+    // small red accent (margin-colored stripe near tail, ties to motif)
+    ctx.strokeStyle = '#D94F4F';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-16, -9);
+    ctx.lineTo(-10, -2);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  function draw(){
+    drawBackground();
+    for(const p of pencils) drawPencil(p);
+    if(state !== STATE.READY) drawPlane();
+    else {
+      // gentle bob preview on ready screen
+      const bob = Math.sin(performance.now()/350) * 8;
+      ctx.save();
+      ctx.translate(0, bob);
+      drawPlane();
+      ctx.restore();
+    }
+  }
+
+  // ---------- loop ----------
+  function loop(t){
+    const dt = Math.min(0.033, (t - lastT) / 1000);
+    lastT = t;
+
+    if(state === STATE.PLAY){
+      update(dt);
+    }
+    draw();
+
+    raf = requestAnimationFrame(loop);
+  }
+
+  // initial paint
+  draw();
+  raf = requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>
